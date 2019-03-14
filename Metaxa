@@ -1,0 +1,106 @@
+
+#Script collection to classify 16S sequences from metagenomic reads using metaxa2 and mothur.
+
+# Requires a mapping file called names
+
+##########################
+metaxa.sh
+
+#!/bin/bash
+#SBATCH -J metaxa2
+#SBATCH -o metaxa2_array_job_out_%j.txt
+#SBATCH -e metaxa2_array_job_err_%j.txt
+#SBATCH -t 10:00:00
+#SBATCH --mem=20000
+#SBATCH --array=1-96
+#SBATCH -n 1
+#SBATCH -c 8
+#SBATCH -p serial
+
+#Takes R1 and R2 files and runs metaxa2 with default parameters. Saves the progress in txt file
+
+# set input file to be processed
+module load biokit
+name=$(sed -n "$SLURM_ARRAY_TASK_ID"p names)
+
+touch metaxa2_progress.txt
+metaxa2  -1 $name"_HostRM_trim.R1.fasta" -2 $name"_HostRM_trim.R2.fasta" -f fasta  --plus --cpu 8 -o $name"_metaxa_out"
+echo $name >> metaxa2_progress.txt
+###############################
+rename_metaxa.sh
+
+#!/bin/bash
+
+#Renames fasta headers for metaxa_classify.sh script and runs the metaxa_classify.sh script
+
+while read name
+do
+sed "s/>/>barcodelabel=$name;read=/" $name"_metaxa_out.extraction.fasta" > $name"_extraction_metaxa_renamed.fasta"
+done < names
+
+module load biokit
+
+#Classifying the extracted metaxa2 SSU sequences with mothur classify seqs.
+bash ~/appl_taito/metaxa_classify.sh names
+################################################
+metaxa_classify.sh names
+
+#!/bin/bash
+
+#Classifies fasta files from identified my metaxa2 to be 16S and makes a matrix from the results.
+
+while read i
+do
+  	name=($i)
+        module load biokit
+
+        #Classify sequences using mothur classify.seqs individually for each sample
+        mothur "#classify.seqs(fasta=$name"_extraction_metaxa_renamed.fasta", reference=/wrk/parnanen/DONOTREMOVE/SILVA.v123/silva.nr_v123.align,\
+        taxonomy=/wrk/parnanen/DONOTREMOVE/SILVA.v123/silva.nr_v123.tax,\
+        cutoff=60, probs=F, processors=8)"
+
+        #Calculate the occurences of each taxa and print to tax_mat, print header
+        awk '{print $2}' $name"_extraction_metaxa_renamed.nr_v123.wang.taxonomy" | sort | uniq -c | sort -n > $name"_tax_mat"
+
+        #Change the order of the columns in tax_mat and sort by taxa
+        awk '{ print $2 " " $1}' $name"_tax_mat" | sort -s -k1,1  > $name"_sorted"
+
+        awk '{print $1}' *_sorted | sort | uniq > uniq_taxa_allsamples
+
+        #Join the sorted count files to the list of all taxa
+        join --nocheck-order -a1 -a2 -e "0"  $name"_sorted" uniq_taxa_allsamples  > $name"_mat.txt"
+
+        echo -e $name > $name"_counts"
+        awk '{print $2}' $name"_mat.txt" >> $name"_counts"
+        sed 's/^$/0/gi' $name"_counts" > $name"_temp"
+        echo -e 'OTU' > uniq_taxa_allsamples_header
+        cat uniq_taxa_allsamples >> uniq_taxa_allsamples_header
+        paste uniq_taxa_allsamples_header  *_temp > mat.txt
+        done < names
+
+#####################################
+
+metaxa_taxtable.sh mat.txt
+
+#!/bin/bash
+#Makes taxonomy table on "species" level. Takes the first argument from the command line for example mat.txt. First argument is the output from mothur classification using the script  ~metaxa_classify.sh which produces an OTU table like matrix 
+
+#Format taxonomy column for basis for tax table
+
+awk '{print $1}' "$1" | tr ";" "\t" | tail -n +2 > temp1
+
+#Remove any file with name temp2
+
+rm -f temp2
+
+#Add column with "OTU" and running number
+
+START=1
+END=$(wc -l <(awk '{print $1}' "$1" | tail -n +2) | awk '{print $1}')
+
+for (( c=$START; c<=$END; c++ ))
+do
+echo ""OTU$c >> temp2
+done
+
+paste temp2 temp1 > tax_table_species.txt
