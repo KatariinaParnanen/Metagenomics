@@ -1,2 +1,2 @@
 # Metagenomics
-Metagenome analysis tools
+Metagenome analysis scripts and accessory files
