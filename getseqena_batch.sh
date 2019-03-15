@@ -7,6 +7,8 @@
 #SBATCH -p serial
 #SBATCH --cpus-per-task=5
 
+#list_of_acclistst contains lists of files with the SRA accessions
+
 name=$(sed -n "$SLURM_ARRAY_TASK_ID"p list_of_acclists)
 
 module load bioconda/3
